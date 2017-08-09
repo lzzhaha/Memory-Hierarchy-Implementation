@@ -1,0 +1,62 @@
+	uint8_t n = cache->n;
+	uint8_t* data = malloc(dataSize);
+	uint32_t edge_mark = 0;//track the conjunction of each segment of data if it is spread over multiple blocks
+        uint8_t off_bits = log2(blockSize);
+        uint8_t in_bits = log2(total/(blockSize * n));
+	uint32_t block_order_in_set =0;
+	while(true){	
+		//address decompse 
+		uint32_t mask;		
+		mask = 1<<off_bits;
+		uint32_t offset = address%mask;
+		address/=mask;
+		mask = 1<<in_bits;
+		uint32_t index = address%mask;
+		uint32_t tag = address/mask;		
+
+		//determine blockNumber
+		uint32_t blockNumber = (index<<log_2(n)) + block_order_in_set;
+		uint8_t valid = getValid(cache,blockNumber);
+		uint64_t dataLocation = getDataLocation(cache,blockNumber,offset);
+		uint64_t next_block_start = getBlockStartBits(cache,blockNumber+1);
+	
+		 if (tagEquals(blockNumber,cache,tag)&& valid){//cache write hit
+			updateLRU(cache, tag,index,getLRU(cache,blockNumber));
+			if ((dataSize-1)*8+ dataLocation < next_block_start){//data fit into the block
+				setData(cache,data+edge_mark,dataSize,offset);
+				setDirty(cache,blockNumber);
+				break;
+			}else{//data spread over multiple blocks
+				block_order_in_set =0;
+				//load data till the end of block
+				uint32_t segment_length = (next_block_start-dataLocation)/8;
+				setData(cache,data+edge_mark,segment_length);
+				edge_mark+=segment_length;
+				// keep searching in next loop
+				dataSize-=segment_length;
+				address+=segment_length;
+				continue;			
+
+			}
+	     	}else if(block_order_in_set<n-1){//search in the set
+			block_order_in_set++;
+			continue;
+	    	}else{//cache miss
+	    		evictionInfo_t* evic = findEviction(cache,address);
+			uint32_t write_size;
+			bool finish;
+			if(dataSize>blockDataSize){//need another loop
+				write_size = blockData_size;
+				dataSize-=blockData_size;
+				address+=segment_length;
+				finish = false;
+			}else{
+				write_size = dataSize;
+				finish = true;
+			}
+			writeDataToCache(cache,address,data+edge_mark,write_size,tag, evict);	
+			if(finish){
+				break;
+			}
+		}
+	}
